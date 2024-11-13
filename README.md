@@ -22,5 +22,3 @@ Steps
 
 After 
 1. terraform -chdir=scripts destroy
-
-End
