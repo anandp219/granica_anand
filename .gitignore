@@ -1,0 +1,58 @@
+.venv/
+**/.venv/
+.idea/
+venv/
+**/venv/**
+*/node_modules/*
+
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# testing
+/coverage
+
+# production
+/build
+
+# misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+# Ignore Terraform state files
+*.tfstate
+*.tfstate.backup
+
+# Ignore crash log files
+crash.log
+
+# Ignore .terraform directory, which contains plugins and other working data
+.terraform/
+
+.terraform.lock*
+# Ignore override files as they may contain sensitive data or local changes
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Ignore Terraform variable files (optional)
+*.tfvars
+*.tfvars.json
+
+# Ignore environment-specific override files (optional)
+env.override.tf
+env.override.tf.json
+
+__pycache__/
