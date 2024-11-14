@@ -132,12 +132,11 @@ def get_eks_cluster_endpoint():
         raise RuntimeError("Unable to resolve cluster endpoint")
 
 
-def run_spark_submit(job_name, credentials, script_path, context):
+def run_spark_submit(
+    job_name, credentials, script_path, context, input_path, output_path
+):
     region = os.getenv("AWS_REGION")
-    input_path = os.getenv("RAW_DATA_PATH")
-    output_path = os.getenv("TRANSFORMED_DATA_PATH")
 
-    # Define the command to run
     command = [
         "spark-submit",
         "--master",

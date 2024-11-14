@@ -1,108 +1,150 @@
+import sys
+
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
-# Initialize Spark session with Delta support
-spark = SparkSession.builder \
-    .appName("UserEngagementAnalytics") \
-    .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-    .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .getOrCreate()
 
-# Define S3 paths
-delta_path = "s3://raw-access-log-data-granica/transfomed_data/"  # replace with your actual Delta table path
-metrics_path = "s3://raw-access-log-data-granica/metrics/"    # base path for saving metrics
+def main(spark_session, input_path, output_path):
+    try:
 
-# Load Delta table as a temporary SQL view
-spark.read.format("delta").load(delta_path).createOrReplaceTempView("user_logs")
+        df = spark_session.read.format("delta").load(input_path)
+        df.createOrReplaceTempView("user_logs")
 
-# 1. Top 5 IP addresses by request count - Daily
-top_ips_daily = spark.sql("""
-    SELECT date, 
-           collect_list(ip_address) AS top_ips, 
-           collect_list(request_count) AS ip_counts
-    FROM (
-        SELECT date_format(timestamp, 'yyyy-MM-dd') AS date,
-               ip_address,
-               COUNT(*) AS request_count,
-               ROW_NUMBER() OVER (PARTITION BY date_format(timestamp, 'yyyy-MM-dd') 
-                                  ORDER BY COUNT(*) DESC) AS rank
-        FROM user_logs
-        GROUP BY date_format(timestamp, 'yyyy-MM-dd'), ip_address
-    ) 
-    WHERE rank <= 5
-    GROUP BY date
-    ORDER BY date
-""")
+        top_ips_daily = spark.sql(
+            """
+            SELECT date, 
+                   ip_address,
+                   COUNT(*) AS request_count
+            FROM user_logs
+            GROUP BY date, ip_address
+            ORDER BY date, request_count DESC
+        """
+        ).filter("request_count > 0")
 
-# 2. Top 5 IP addresses by request count - Weekly
-top_ips_weekly = spark.sql("""
-    SELECT week, 
-           collect_list(ip_address) AS top_ips, 
-           collect_list(request_count) AS ip_counts
-    FROM (
-        SELECT date_format(timestamp, 'yyyy-ww') AS week,
-               ip_address,
-               COUNT(*) AS request_count,
-               ROW_NUMBER() OVER (PARTITION BY date_format(timestamp, 'yyyy-ww') 
-                                  ORDER BY COUNT(*) DESC) AS rank
-        FROM user_logs
-        GROUP BY date_format(timestamp, 'yyyy-ww'), ip_address
-    ) 
-    WHERE rank <= 5
-    GROUP BY week
-    ORDER BY week
-""")
+        top_ips_daily.format("delta").partitionBy("timestamp").mode("overwrite").option(
+            "overwriteSchema", "true"
+        ).save(f"{output_path}/top_ips_daily")
 
-# 3. Top 5 Devices by request count - Daily
-top_devices_daily = spark.sql("""
-    SELECT date, 
-           collect_list(device) AS top_devices, 
-           collect_list(device_count) AS device_counts
-    FROM (
-        SELECT date_format(timestamp, 'yyyy-MM-dd') AS date,
-               device,
-               COUNT(*) AS device_count,
-               ROW_NUMBER() OVER (PARTITION BY date_format(timestamp, 'yyyy-MM-dd') 
-                                  ORDER BY COUNT(*) DESC) AS rank
-        FROM user_logs
-        GROUP BY date_format(timestamp, 'yyyy-MM-dd'), device
-    ) 
-    WHERE rank <= 5
-    GROUP BY date
-    ORDER BY date
-""")
+        top_ips_weekly = spark.sql(
+            """
+        WITH data_with_weekly_date_array AS (
+            SELECT 
+                SEQUENCE(cast(date as date), DATE_ADD(cast(date as date), 6)) AS weekly_date_array,
+                date,
+                ip_address,
+                http_verb,
+                path,
+                device,
+                status
+            FROM user_logs
+        ),
+        data_with_weekly_date_spine AS (
+        SELECT 
+                timestamp,
+                date,
+                ip_address,
+                http_verb,
+                path,
+                device,
+                status
+            FROM data_with_weekly_date_array
+            LATERAL VIEW EXPLODE(weekly_date_array) t AS timestamp
+        )
+        SELECT 
+            ip_address, timestamp, COUNT(*) as value
+            FROM data_with_weekly_date_spine
+            GROUP BY ip_address, timestamp
+            ORDER BY timestamp, value DESC
+        """
+        )
 
-# 4. Top 5 Devices by request count - Weekly
-top_devices_weekly = spark.sql("""
-    SELECT week, 
-           collect_list(device) AS top_devices, 
-           collect_list(device_count) AS device_counts
-    FROM (
-        SELECT date_format(timestamp, 'yyyy-ww') AS week,
-               device,
-               COUNT(*) AS device_count,
-               ROW_NUMBER() OVER (PARTITION BY date_format(timestamp, 'yyyy-ww') 
-                                  ORDER BY COUNT(*) DESC) AS rank
-        FROM user_logs
-        GROUP BY date_format(timestamp, 'yyyy-ww'), device
-    ) 
-    WHERE rank <= 5
-    GROUP BY week
-    ORDER BY week
-""")
+        window_spec_ips_weekly = Window.partitionBy("timestamp").orderBy(
+            F.desc("value")
+        )
+        top_ips_rolling_weekly = top_ips_weekly.withColumn(
+            "rank", F.row_number().over(window_spec_ips_weekly)
+        ).filter("rank <= 5")
 
-# Save each metric in Delta format under the specified S3 path
+        top_ips_rolling_weekly.format("delta").partitionBy("timestamp").mode(
+            "overwrite"
+        ).option("overwriteSchema", "true").save(f"{output_path}/top_ips_weekly")
 
-# Save daily IP metrics
-top_ips_daily.write.format("delta").mode("overwrite").partitionBy("date").save(f"{metrics_path}top_ips_daily")
+        top_devices_daily = spark.sql(
+            """
+            SELECT date, 
+                   device,
+                   COUNT(*) AS request_count
+            FROM user_logs
+            GROUP BY date, ip_address
+            ORDER BY date, request_count DESC
+        """
+        ).filter("request_count > 0")
 
-# Save weekly IP metrics
-top_ips_weekly.write.format("delta").mode("overwrite").partitionBy("week").save(f"{metrics_path}top_ips_weekly")
+        top_devices_daily.format("delta").partitionBy("timestamp").mode(
+            "overwrite"
+        ).option("overwriteSchema", "true").save(f"{output_path}/top_devices_daily")
 
-# Save daily device metrics
-top_devices_daily.write.format("delta").mode("overwrite").partitionBy("date").save(f"{metrics_path}top_devices_daily")
+        top_devices_weekly = spark.sql(
+            """
+        WITH data_with_weekly_date_array AS (
+            SELECT 
+                SEQUENCE(cast(date as date), DATE_ADD(cast(date as date), 6)) AS weekly_date_array,
+                date,
+                ip_address,
+                http_verb,
+                path,
+                device,
+                status
+            FROM user_logs
+        ),
+        data_with_weekly_date_spine AS (
+        SELECT 
+                timestamp,
+                date,
+                ip_address,
+                http_verb,
+                path,
+                device,
+                status
+            FROM data_with_weekly_date_array
+            LATERAL VIEW EXPLODE(weekly_date_array) t AS timestamp
+        )
+        SELECT 
+            device, timestamp, COUNT(*) as value
+            FROM data_with_weekly_date_spine
+            GROUP BY device, timestamp
+            ORDER BY timestamp, value DESC
+        """
+        )
 
-# Save weekly device metrics
-top_devices_weekly.write.format("delta").mode("overwrite").partitionBy("week").save(f"{metrics_path}top_devices_weekly")
+        window_spec_devices_weekly = Window.partitionBy("timestamp").orderBy(
+            F.desc("value")
+        )
+        top_devices_rolling_weekly = top_devices_weekly.withColumn(
+            "rank", F.row_number().over(window_spec_devices_weekly)
+        ).filter("rank <= 5")
 
-# Stop the Spark session
-spark.stop()
+        top_devices_rolling_weekly.format("delta").partitionBy("timestamp").mode(
+            "overwrite"
+        ).option("overwriteSchema", "true").save(f"{output_path}/top_devices_weekly")
+
+    except Exception as e:
+        print(f"Error processing logs: {str(e)}")
+        raise
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Error: Two arguments are required.")
+        sys.exit(1)
+
+    input_s3_path = sys.argv[1]
+    output_s3_path = sys.argv[2]
+
+    print(f"Input S3 path: {input_s3_path}")
+    print(f"Output S3 path: {output_s3_path}")
+
+    spark = SparkSession.builder.appName("calculate_metrics").getOrCreate()
+
+    main(spark, input_s3_path, output_s3_path)
