@@ -22,3 +22,12 @@ Steps
 
 After 
 1. terraform -chdir=scripts destroy
+
+
+Usages
+1. Dagster for pipeline orchestration
+2. Terraform for infrastructure provisioning
+3. AWS EKS for kubernetes cluster
+4. Kubectl for kubernetes cluster management
+5. Python for pipeline development
+6. AWS CLI for aws management

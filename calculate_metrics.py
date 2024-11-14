@@ -15,16 +15,21 @@ def main(spark_session, input_path, output_path):
             """
             SELECT date, 
                    ip_address,
-                   COUNT(*) AS request_count
+                   COUNT(*) AS value
             FROM user_logs
             GROUP BY date, ip_address
-            ORDER BY date, request_count DESC
+            ORDER BY date, value DESC
         """
-        ).filter("request_count > 0")
+        ).filter("value > 0")
 
-        top_ips_daily.format("delta").partitionBy("timestamp").mode("overwrite").option(
-            "overwriteSchema", "true"
-        ).save(f"{output_path}/top_ips_daily")
+        window_spec_ips_daily = Window.partitionBy("date").orderBy(F.desc("value"))
+        top_ips_daily = top_ips_daily.withColumn(
+            "rank", F.row_number().over(window_spec_ips_daily)
+        ).filter("rank <= 5")
+
+        top_ips_daily.write.format("delta").partitionBy("date").mode(
+            "overwrite"
+        ).option("overwriteSchema", "true").save(f"{output_path}/top_ips_daily")
 
         top_ips_weekly = spark.sql(
             """
@@ -66,7 +71,7 @@ def main(spark_session, input_path, output_path):
             "rank", F.row_number().over(window_spec_ips_weekly)
         ).filter("rank <= 5")
 
-        top_ips_rolling_weekly.format("delta").partitionBy("timestamp").mode(
+        top_ips_rolling_weekly.write.format("delta").partitionBy("timestamp").mode(
             "overwrite"
         ).option("overwriteSchema", "true").save(f"{output_path}/top_ips_weekly")
 
@@ -74,14 +79,19 @@ def main(spark_session, input_path, output_path):
             """
             SELECT date, 
                    device,
-                   COUNT(*) AS request_count
+                   COUNT(*) AS value
             FROM user_logs
-            GROUP BY date, ip_address
-            ORDER BY date, request_count DESC
+            GROUP BY date, device
+            ORDER BY date, value DESC
         """
-        ).filter("request_count > 0")
+        ).filter("value > 0")
 
-        top_devices_daily.format("delta").partitionBy("timestamp").mode(
+        window_spec_devices_daily = Window.partitionBy("date").orderBy(F.desc("value"))
+        top_devices_daily = top_devices_daily.withColumn(
+            "rank", F.row_number().over(window_spec_devices_daily)
+        ).filter("rank <= 5")
+
+        top_devices_daily.write.format("delta").partitionBy("date").mode(
             "overwrite"
         ).option("overwriteSchema", "true").save(f"{output_path}/top_devices_daily")
 
@@ -125,7 +135,7 @@ def main(spark_session, input_path, output_path):
             "rank", F.row_number().over(window_spec_devices_weekly)
         ).filter("rank <= 5")
 
-        top_devices_rolling_weekly.format("delta").partitionBy("timestamp").mode(
+        top_devices_rolling_weekly.write.format("delta").partitionBy("timestamp").mode(
             "overwrite"
         ).option("overwriteSchema", "true").save(f"{output_path}/top_devices_weekly")
 
