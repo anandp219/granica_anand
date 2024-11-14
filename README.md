@@ -31,3 +31,8 @@ Usages
 4. Kubectl for kubernetes cluster management
 5. Python for pipeline development
 6. AWS CLI for aws management
+
+Further work
+1. Enable hive support
+2. Enable query via client
+3. Spark optimization
